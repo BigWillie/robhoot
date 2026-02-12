@@ -43,7 +43,7 @@ function parseCSVLine(line) {
 }
 
 // --- Load Questions ---
-const csvPath = path.join(__dirname, 'questions.csv');
+const csvPath = path.join(__dirname, 'data', 'questions.csv');
 
 function loadQuestions() {
   const rows = parseCSV(csvPath);
