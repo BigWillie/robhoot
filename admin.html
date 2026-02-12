@@ -108,6 +108,8 @@
 
   <div class="toolbar">
     <button class="btn" id="add-row-btn">+ Add Row</button>
+    <button class="btn" id="import-btn">Import CSV</button>
+    <input type="file" id="csv-file" accept=".csv" hidden>
     <button class="btn btn-save" id="save-btn">Save</button>
   </div>
   <div class="status-msg" id="status"></div>
@@ -130,6 +132,7 @@
       reactiveData: true,
       data: [],
       columns: [
+        { rowHandle: true, formatter: 'handle', headerSort: false, frozen: true, width: 40 },
         {
           title: 'Question', field: 'question', editor: 'input',
           widthGrow: 3, minWidth: 200,
@@ -181,6 +184,52 @@
         correct: '1', time_limit: '20',
       });
     });
+
+    // Import CSV
+    const csvFileInput = document.getElementById('csv-file');
+    document.getElementById('import-btn').addEventListener('click', () => csvFileInput.click());
+    csvFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const rows = parseCSV(reader.result);
+        table.setData(rows);
+        showStatus(`Imported ${rows.length} questions (remember to Save)`, 'success');
+      };
+      reader.readAsText(file);
+      csvFileInput.value = '';
+    });
+
+    function parseCSVLine(line) {
+      const result = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          inQuotes = !inQuotes;
+        } else if (ch === ',' && !inQuotes) {
+          result.push(current);
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current);
+      return result;
+    }
+
+    function parseCSV(text) {
+      const lines = text.split('\n').filter(l => l.trim());
+      const headers = parseCSVLine(lines[0]);
+      return lines.slice(1).map(line => {
+        const vals = parseCSVLine(line);
+        const obj = {};
+        headers.forEach((h, i) => obj[h.trim()] = (vals[i] || '').trim());
+        return obj;
+      });
+    }
 
     // Save
     document.getElementById('save-btn').addEventListener('click', () => {
