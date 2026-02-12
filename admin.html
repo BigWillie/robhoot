@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RobHoot Admin</title>
+  <link href="https://unpkg.com/tabulator-tables@6.3/dist/css/tabulator_midnight.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body {
+      align-items: stretch;
+      padding: 0;
+    }
+
+    .admin-header {
+      text-align: center;
+      padding: 1rem 1.5rem 0.5rem;
+    }
+
+    .logo {
+      font-size: 2.2rem;
+      margin: 0.75rem 0 0.25rem;
+    }
+
+    .admin-subtitle {
+      opacity: 0.7;
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      padding: 0.75rem 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    .toolbar .btn {
+      font-size: 1rem;
+      padding: 0.6rem 1.5rem;
+      margin: 0;
+    }
+
+    .btn-danger {
+      background: #e21b3c;
+      color: #fff;
+    }
+
+    .btn-save {
+      background: #26890c;
+      color: #fff;
+    }
+
+    #table-container {
+      flex: 1;
+      padding: 0 1rem 1.5rem;
+      overflow: auto;
+    }
+
+    .status-msg {
+      text-align: center;
+      padding: 0.5rem;
+      font-weight: 600;
+      min-height: 2rem;
+    }
+
+    .status-msg.error { color: #e21b3c; }
+    .status-msg.success { color: #66ff66; }
+
+    /* Tabulator overrides for RobHoot theme */
+    .tabulator {
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    .tabulator .tabulator-header {
+      background: rgba(255,255,255,0.1);
+    }
+
+    .tabulator .tabulator-cell {
+      border-right: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .delete-btn {
+      background: #e21b3c;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+
+    .delete-btn:hover {
+      background: #c0162f;
+    }
+  </style>
+</head>
+<body>
+  <div class="admin-header">
+    <div class="logo">Rob<span>Hoot</span></div>
+    <div class="admin-subtitle">Question Editor</div>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn" id="add-row-btn">+ Add Row</button>
+    <button class="btn btn-save" id="save-btn">Save</button>
+  </div>
+  <div class="status-msg" id="status"></div>
+  <div id="table-container"></div>
+
+  <script src="https://unpkg.com/tabulator-tables@6.3/dist/js/tabulator.min.js"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+
+    function showStatus(msg, type) {
+      statusEl.textContent = msg;
+      statusEl.className = 'status-msg ' + type;
+      if (type === 'success') setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    }
+
+    const table = new Tabulator('#table-container', {
+      height: '100%',
+      layout: 'fitColumns',
+      reactiveData: true,
+      data: [],
+      columns: [
+        {
+          title: 'Question', field: 'question', editor: 'input',
+          widthGrow: 3, minWidth: 200,
+        },
+        {
+          title: 'Type', field: 'type', editor: 'list', width: 80,
+          editorParams: { values: ['mc', 'tf'] },
+        },
+        { title: 'Option 1', field: 'option1', editor: 'input', widthGrow: 1 },
+        { title: 'Option 2', field: 'option2', editor: 'input', widthGrow: 1 },
+        { title: 'Option 3', field: 'option3', editor: 'input', widthGrow: 1 },
+        { title: 'Option 4', field: 'option4', editor: 'input', widthGrow: 1 },
+        {
+          title: 'Correct', field: 'correct', editor: 'list', width: 90,
+          editorParams: { values: ['1', '2', '3', '4'] },
+        },
+        {
+          title: 'Time', field: 'time_limit', editor: 'number', width: 80,
+          editorParams: { min: 5, max: 120, step: 5 },
+        },
+        {
+          title: '', width: 70, hozAlign: 'center', headerSort: false,
+          formatter: function() {
+            return '<button class="delete-btn">X</button>';
+          },
+          cellClick: function(e, cell) {
+            if (e.target.classList.contains('delete-btn')) {
+              cell.getRow().delete();
+            }
+          },
+        },
+      ],
+    });
+
+    // Load data
+    fetch('/api/questions')
+      .then(r => {
+        if (!r.ok) throw new Error('Failed to load questions');
+        return r.json();
+      })
+      .then(data => table.setData(data))
+      .catch(err => showStatus(err.message, 'error'));
+
+    // Add row
+    document.getElementById('add-row-btn').addEventListener('click', () => {
+      table.addRow({
+        question: '', type: 'mc',
+        option1: '', option2: '', option3: '', option4: '',
+        correct: '1', time_limit: '20',
+      });
+    });
+
+    // Save
+    document.getElementById('save-btn').addEventListener('click', () => {
+      const data = table.getData();
+      showStatus('Saving...', '');
+      fetch('/api/questions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+        .then(r => {
+          if (!r.ok) throw new Error('Save failed');
+          return r.json();
+        })
+        .then(res => showStatus(`Saved ${res.count} questions`, 'success'))
+        .catch(err => showStatus(err.message, 'error'));
+    });
+  </script>
+</body>
+</html>

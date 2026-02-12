@@ -231,7 +231,70 @@ function endGame() {
   broadcast('leaderboard', { leaderboard });
 }
 
+// --- Basic Auth ---
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'admin';
+
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Basic ')) {
+    res.set('WWW-Authenticate', 'Basic realm="RobHoot Admin"');
+    return res.status(401).send('Authentication required');
+  }
+  const [user, pass] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
+  if (user === ADMIN_USER && pass === ADMIN_PASS) return next();
+  res.set('WWW-Authenticate', 'Basic realm="RobHoot Admin"');
+  return res.status(401).send('Invalid credentials');
+}
+
+// --- CSV Serializer ---
+function serializeCSV(rows) {
+  const headers = ['question', 'type', 'option1', 'option2', 'option3', 'option4', 'correct', 'time_limit'];
+  const quoteField = (val) => {
+    const s = String(val ?? '');
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  };
+  const lines = [headers.join(',')];
+  for (const row of rows) {
+    lines.push(headers.map(h => quoteField(row[h])).join(','));
+  }
+  return lines.join('\n') + '\n';
+}
+
 // --- Express ---
+app.use(express.json());
+
+// Admin routes (before static middleware)
+app.get('/admin', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+app.get('/api/questions', requireAuth, (req, res) => {
+  try {
+    const rows = parseCSV(csvPath);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/questions', requireAuth, (req, res) => {
+  try {
+    const rows = req.body;
+    if (!Array.isArray(rows)) {
+      return res.status(400).json({ error: 'Expected an array of question objects' });
+    }
+    const csv = serializeCSV(rows);
+    fs.writeFileSync(csvPath, csv, 'utf-8');
+    res.json({ ok: true, count: rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- WebSocket ---
