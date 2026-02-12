@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RobHoot — Host</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Lobby -->
+  <div id="lobby" class="screen active">
+    <div class="logo">Rob<span>Hoot</span></div>
+    <h2>Join at</h2>
+    <p style="font-size:1.1rem;opacity:0.7" id="join-url"></p>
+    <div class="pin-display" id="pin">----</div>
+    <canvas id="qr-code"></canvas>
+    <div class="player-count" id="player-count">0 players</div>
+    <div class="player-list" id="player-list"></div>
+    <label style="display:flex;align-items:center;gap:0.5rem;margin-top:1.5rem;font-size:1.1rem;cursor:pointer;user-select:none">
+      <input type="checkbox" id="auto-advance" style="width:1.3rem;height:1.3rem;cursor:pointer">
+      Auto-advance between screens
+    </label>
+    <button class="btn" id="start-btn" disabled>Start Game</button>
+  </div>
+
+  <!-- Question -->
+  <div id="question-screen" class="screen">
+    <div class="question-counter" id="q-counter"></div>
+    <div class="timer" id="timer">--</div>
+    <div class="question-text" id="q-text"></div>
+    <div class="options-grid" id="q-options"></div>
+    <div class="answer-count" id="answer-count"></div>
+  </div>
+
+  <!-- Reveal: Step 1 — Correct answer highlighted -->
+  <div id="reveal-answer" class="screen">
+    <div class="question-counter" id="ra-counter"></div>
+    <div class="question-text" id="ra-text"></div>
+    <div class="options-grid" id="ra-options"></div>
+    <button class="btn" id="show-stats-btn">Show Stats</button>
+  </div>
+
+  <!-- Reveal: Step 2 — Bar chart -->
+  <div id="reveal-stats" class="screen">
+    <div class="question-counter" id="rs-counter"></div>
+    <div class="bar-chart" id="bar-chart"></div>
+    <button class="btn" id="show-lb-btn">Show Leaderboard</button>
+  </div>
+
+  <!-- Reveal: Step 3 — Mini leaderboard -->
+  <div id="reveal-leaderboard" class="screen">
+    <h2>Top Players</h2>
+    <div class="leaderboard-list" id="mini-lb-list"></div>
+    <button class="btn" id="next-btn">Next Question</button>
+  </div>
+
+  <!-- Final Leaderboard -->
+  <div id="leaderboard-screen" class="screen">
+    <div class="logo">Rob<span>Hoot</span></div>
+    <h1>Final Results</h1>
+    <div class="leaderboard-list" id="final-lb"></div>
+    <button class="btn" id="reset-btn">Play Again</button>
+  </div>
+
+  <script src="/vendor/qrcode.min.js"></script>
+  <script>
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/host`);
+
+    const $ = id => document.getElementById(id);
+    const screens = document.querySelectorAll('.screen');
+    const optionColors = ['option-1', 'option-2', 'option-3', 'option-4'];
+
+    let currentQ = null;
+    let revealData = null;
+    let autoTimer = null;
+    const AUTO_DELAY = 3000; // ms between auto-advance steps
+
+    function showScreen(id) {
+      screens.forEach(s => s.classList.remove('active'));
+      $(id).classList.add('active');
+      clearAutoTimer();
+    }
+
+    function clearAutoTimer() {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+    }
+
+    function scheduleAuto(fn) {
+      clearAutoTimer();
+      if ($('auto-advance').checked) {
+        autoTimer = setTimeout(fn, AUTO_DELAY);
+      }
+    }
+
+    // Set join URL
+    $('join-url').textContent = `${location.host}/play.html`;
+
+    ws.onmessage = (e) => {
+      const { type, data } = JSON.parse(e.data);
+
+      switch (type) {
+        case 'lobby':
+          showScreen('lobby');
+          $('pin').textContent = data.pin;
+          renderPlayers(data.players);
+          // Generate QR code with play URL + PIN
+          const playUrl = `${location.protocol}//${location.host}/play.html?pin=${data.pin}`;
+          QRCode.toCanvas($('qr-code'), playUrl, {
+            width: 200,
+            margin: 1,
+            color: { dark: '#000', light: '#fff' },
+          });
+          break;
+
+        case 'player-joined':
+          renderPlayers(data.players);
+          $('start-btn').disabled = false;
+          break;
+
+        case 'player-left':
+          renderPlayers(data.players);
+          if (data.count === 0) $('start-btn').disabled = true;
+          break;
+
+        case 'question':
+          currentQ = data;
+          showScreen('question-screen');
+          $('q-counter').textContent = `Question ${data.index + 1} of ${data.total}`;
+          $('timer').textContent = data.timeLimit;
+          $('timer').className = 'timer';
+          $('q-text').textContent = data.question;
+          $('answer-count').textContent = '';
+          renderOptions('q-options', data.options);
+          break;
+
+        case 'timer':
+          $('timer').textContent = data.remaining;
+          if (data.remaining <= 5) {
+            $('timer').classList.add('warning');
+          }
+          break;
+
+        case 'answer-count':
+          $('answer-count').textContent = `${data.count} / ${data.total} answered`;
+          break;
+
+        case 'results':
+          revealData = data;
+          // Step 1: Show question with correct answer highlighted
+          showScreen('reveal-answer');
+          const counter = `Question ${currentQ.index + 1} of ${currentQ.total}`;
+          $('ra-counter').textContent = counter;
+          $('rs-counter').textContent = counter;
+          $('ra-text').textContent = currentQ.question;
+          renderRevealOptions(data);
+          renderBarChart(data);
+          renderMiniLeaderboard(data.leaderboard);
+          $('next-btn').textContent = data.isLast ? 'Show Results' : 'Next Question';
+          scheduleAuto(() => $('show-stats-btn').click());
+          break;
+
+        case 'leaderboard':
+          showScreen('leaderboard-screen');
+          renderFinalLeaderboard(data.leaderboard);
+          break;
+
+        case 'error':
+          alert(data.message);
+          break;
+      }
+    };
+
+    ws.onclose = () => {
+      document.body.innerHTML = '<div class="screen active"><div class="logo">Rob<span>Hoot</span></div><h2>Disconnected</h2><p>Refresh to start a new game</p></div>';
+    };
+
+    function renderPlayers(players) {
+      $('player-count').textContent = `${players.length} player${players.length !== 1 ? 's' : ''}`;
+      $('player-list').innerHTML = players.map(name =>
+        `<div class="player-chip">${esc(name)}</div>`
+      ).join('');
+    }
+
+    function renderOptions(containerId, options) {
+      $(containerId).innerHTML = options.map((opt, i) =>
+        `<div class="option-btn ${optionColors[i]}">${esc(opt)}</div>`
+      ).join('');
+    }
+
+    function renderRevealOptions(data) {
+      $('ra-options').innerHTML = currentQ.options.map((opt, i) => {
+        const cls = (i + 1) === data.correct ? 'correct' : 'incorrect';
+        return `<div class="option-btn ${optionColors[i]} ${cls}">${esc(opt)}</div>`;
+      }).join('');
+    }
+
+    function renderBarChart(data) {
+      const max = Math.max(...data.distribution, 1);
+      $('bar-chart').innerHTML = data.distribution.map((count, i) =>
+        `<div class="bar-col">
+          <div class="bar-value">${count}</div>
+          <div class="bar ${optionColors[i]}" style="height:${(count / max) * 100}%"></div>
+          <div class="bar-label">${esc(data.options[i])}</div>
+        </div>`
+      ).join('');
+    }
+
+    function renderMiniLeaderboard(lb) {
+      $('mini-lb-list').innerHTML = lb.map((p, i) =>
+        `<div class="leaderboard-row">
+          <div class="leaderboard-rank">${i + 1}</div>
+          <div class="leaderboard-name">${esc(p.name)}</div>
+          <div class="leaderboard-score">${p.score.toLocaleString()}</div>
+        </div>`
+      ).join('');
+    }
+
+    function renderFinalLeaderboard(lb) {
+      $('final-lb').innerHTML = lb.map((p, i) =>
+        `<div class="leaderboard-row">
+          <div class="leaderboard-rank">${i + 1}</div>
+          <div class="leaderboard-name">${esc(p.name)}</div>
+          <div class="leaderboard-score">${p.score.toLocaleString()}</div>
+        </div>`
+      ).join('');
+    }
+
+    function esc(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    // Button handlers
+    $('start-btn').addEventListener('click', () => {
+      ws.send(JSON.stringify({ type: 'start' }));
+    });
+
+    $('show-stats-btn').addEventListener('click', () => {
+      showScreen('reveal-stats');
+      scheduleAuto(() => $('show-lb-btn').click());
+    });
+
+    $('show-lb-btn').addEventListener('click', () => {
+      showScreen('reveal-leaderboard');
+      scheduleAuto(() => $('next-btn').click());
+    });
+
+    $('next-btn').addEventListener('click', () => {
+      clearAutoTimer();
+      ws.send(JSON.stringify({ type: 'next' }));
+    });
+
+    $('reset-btn').addEventListener('click', () => {
+      ws.send(JSON.stringify({ type: 'reset' }));
+    });
+  </script>
+</body>
+</html>

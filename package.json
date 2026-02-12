@@ -1,0 +1,13 @@
+{
+  "name": "robhoot",
+  "version": "1.0.0",
+  "description": "Simple real-time quiz game",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  }
+}

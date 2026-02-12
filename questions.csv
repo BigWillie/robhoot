@@ -1,0 +1,11 @@
+question,type,option1,option2,option3,option4,correct,time_limit
+"What is the capital of France?",mc,"Paris","London","Berlin","Rome",1,5
+"The Earth is flat.",tf,"True","False","","",2,5
+"Which planet is known as the Red Planet?",mc,"Venus","Mars","Jupiter","Saturn",2,5
+"What is the largest ocean on Earth?",mc,"Atlantic","Indian","Pacific","Arctic",3,5
+"Light travels faster than sound.",tf,"True","False","","",1,5
+"How many continents are there?",mc,"5","6","7","8",3,5
+"What is the chemical symbol for water?",mc,"H2O","CO2","NaCl","O2",1,5
+"The Great Wall of China is visible from space.",tf,"True","False","","",2,5
+"Which language has the most native speakers?",mc,"English","Spanish","Mandarin","Hindi",3,5
+"What year did the Titanic sink?",mc,"1905","1912","195","1898",2,5
