@@ -54,7 +54,7 @@
 
     #table-container {
       flex: 1;
-      padding: 0 1rem 1.5rem;
+      padding: 1.5rem;
       margin: 0 1.5rem 1.5rem;
       overflow: auto;
     }
@@ -128,6 +128,7 @@
     const table = new Tabulator('#table-container', {
       height: '100%',
       layout: 'fitColumns',
+      headerSort: false,
       movableRows: true,
       rowHeader: {
         headerSort: false,
@@ -142,22 +143,22 @@
       columns: [
         {
           title: 'Question', field: 'question', editor: 'input',
-          widthGrow: 3, minWidth: 200,
+          widthGrow: 3, minWidth: 200, headerSort:false,
         },
         {
-          title: 'Type', field: 'type', editor: 'list', width: 80,
+          title: 'Type', field: 'type', editor: 'list', width: 80, headerSort:false,
           editorParams: { values: ['mc', 'tf'] },
         },
-        { title: 'Option 1', field: 'option1', editor: 'input', widthGrow: 1 },
-        { title: 'Option 2', field: 'option2', editor: 'input', widthGrow: 1 },
-        { title: 'Option 3', field: 'option3', editor: 'input', widthGrow: 1 },
-        { title: 'Option 4', field: 'option4', editor: 'input', widthGrow: 1 },
+        { title: 'Option 1', field: 'option1', editor: 'input', widthGrow: 1, headerSort:false,},
+        { title: 'Option 2', field: 'option2', editor: 'input', widthGrow: 1, headerSort:false,},
+        { title: 'Option 3', field: 'option3', editor: 'input', widthGrow: 1, headerSort:false,},
+        { title: 'Option 4', field: 'option4', editor: 'input', widthGrow: 1, headerSort:false,},
         {
-          title: 'Correct', field: 'correct', editor: 'list', width: 90,
+          title: 'Correct', field: 'correct', editor: 'list', width: 90, headerSort:false,
           editorParams: { values: ['1', '2', '3', '4'] },
         },
         {
-          title: 'Time', field: 'time_limit', editor: 'number', width: 80,
+          title: 'Time', field: 'time_limit', editor: 'number', width: 80, headerSort:false,
           editorParams: { min: 5, max: 120, step: 5 },
         },
         {
