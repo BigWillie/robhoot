@@ -43,6 +43,32 @@ question,type,option1,option2,option3,option4,correct,time_limit
 - **correct** — 1-based index of the correct option
 - **time_limit** — seconds per question
 
+### Admin Editor
+
+A built-in admin page lets you edit questions in a spreadsheet-style table without touching the CSV file directly.
+
+Open `http://localhost:3000/admin` — the browser will prompt for a username and password.
+
+| Variable | Default |
+|---|---|
+| `ADMIN_USER` | `admin` |
+| `ADMIN_PASS` | `admin` |
+
+Set these environment variables to change the credentials:
+
+```bash
+ADMIN_PASS=my-secret npm start
+```
+
+Changes are saved back to `questions.csv` and automatically picked up by the game.
+
+## Docker
+
+```bash
+docker build -t robhoot .
+docker run -p 3000:3000 -e ADMIN_PASS=my-secret robhoot
+```
+
 ## License
 
 MIT

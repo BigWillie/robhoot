@@ -55,6 +55,7 @@
     #table-container {
       flex: 1;
       padding: 0 1rem 1.5rem;
+      margin: 0 1.5rem 1.5rem;
       overflow: auto;
     }
 
@@ -125,6 +126,7 @@
     const table = new Tabulator('#table-container', {
       height: '100%',
       layout: 'fitColumns',
+      moveableRows: true,
       reactiveData: true,
       data: [],
       columns: [
