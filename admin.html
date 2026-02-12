@@ -128,11 +128,18 @@
     const table = new Tabulator('#table-container', {
       height: '100%',
       layout: 'fitColumns',
-      moveableRows: true,
+      movableRows: true,
+      rowHeader: {
+        headerSort: false,
+        resizable: false,
+        minWidth: 30,
+        width: 30,
+        rowHandle: true,
+        formatter: "handle",
+      },
       reactiveData: true,
       data: [],
       columns: [
-        { rowHandle: true, formatter: 'handle', headerSort: false, frozen: true, width: 40 },
         {
           title: 'Question', field: 'question', editor: 'input',
           widthGrow: 3, minWidth: 200,
