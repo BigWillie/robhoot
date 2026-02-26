@@ -212,6 +212,14 @@ h2 {
   justify-content: center;
 }
 
+.question-image {
+  max-width: 100%;
+  max-height: 250px;
+  border-radius: 0.75rem;
+  object-fit: contain;
+  margin: 0.5rem 0;
+}
+
 .question-counter {
   font-size: 1rem;
   opacity: 0.7;
@@ -390,6 +398,22 @@ h2 {
   color: #ff6b35;
 }
 
+/* -- Emoji picker -- */
+.emoji-picker { width: 100%; margin-top: 0.5rem; }
+.emoji-picker-label { font-size: 1rem; opacity: 0.8; margin-bottom: 0.5rem; font-weight: 600; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 0.4rem; }
+.emoji-option { font-size: 1.6rem; background: rgba(255,255,255,0.1); border: 2px solid transparent; border-radius: 0.5rem; padding: 0.3rem; cursor: pointer; transition: transform 0.1s, border-color 0.15s; line-height: 1; }
+.emoji-option:hover { transform: scale(1.15); background: rgba(255,255,255,0.2); }
+.emoji-option.selected { border-color: #ff6b35; background: rgba(255,107,53,0.3); transform: scale(1.1); }
+
+/* -- Avatar display -- */
+.leaderboard-avatar { font-size: 1.5rem; margin-right: 0.5rem; line-height: 1; }
+.player-chip-avatar { font-size: 1.2rem; margin-right: 0.25rem; }
+
+/* Disable slideIn on FLIP-animated rows */
+.leaderboard-row.lb-animate,
+.leaderboard-row.lb-final-animate { animation: none; }
+
 /* -- Responsive -- */
 @media (max-width: 600px) {
   .pin-display {
@@ -426,4 +450,7 @@ h2 {
   .bar-chart {
     height: 150px;
   }
+
+  .emoji-grid { grid-template-columns: repeat(6, 1fr); }
+  .emoji-option { font-size: 1.3rem; padding: 0.25rem; }
 }

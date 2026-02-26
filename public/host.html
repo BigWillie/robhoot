@@ -28,6 +28,7 @@
     <div class="question-counter" id="q-counter"></div>
     <div class="timer" id="timer">--</div>
     <div class="question-text" id="q-text"></div>
+    <img id="q-image" class="question-image" hidden>
     <div class="options-grid" id="q-options"></div>
     <div class="answer-count" id="answer-count"></div>
   </div>
@@ -36,6 +37,7 @@
   <div id="reveal-answer" class="screen">
     <div class="question-counter" id="ra-counter"></div>
     <div class="question-text" id="ra-text"></div>
+    <img id="ra-image" class="question-image" hidden>
     <div class="options-grid" id="ra-options"></div>
     <button class="btn" id="show-stats-btn">Show Stats</button>
   </div>
@@ -130,6 +132,7 @@
           $('timer').textContent = data.timeLimit;
           $('timer').className = 'timer';
           $('q-text').textContent = data.question;
+          showImage('q-image', data.image);
           $('answer-count').textContent = '';
           renderOptions('q-options', data.options);
           break;
@@ -153,9 +156,11 @@
           $('ra-counter').textContent = counter;
           $('rs-counter').textContent = counter;
           $('ra-text').textContent = currentQ.question;
+          showImage('ra-image', currentQ.image);
           renderRevealOptions(data);
           renderBarChart(data);
-          renderMiniLeaderboard(data.leaderboard);
+          // Don't render mini leaderboard here — defer to show-lb-btn click
+          // so the container is visible for FLIP getBoundingClientRect()
           $('next-btn').textContent = data.isLast ? 'Show Results' : 'Next Question';
           scheduleAuto(() => $('show-stats-btn').click());
           break;
@@ -175,11 +180,24 @@
       document.body.innerHTML = '<div class="screen active"><div class="logo">Rob<span>Hoot</span></div><h2>Disconnected</h2><p>Refresh to start a new game</p></div>';
     };
 
+    function showImage(id, filename) {
+      const img = $(id);
+      if (filename) {
+        img.src = `/images/${filename}`;
+        img.hidden = false;
+      } else {
+        img.hidden = true;
+        img.src = '';
+      }
+    }
+
     function renderPlayers(players) {
       $('player-count').textContent = `${players.length} player${players.length !== 1 ? 's' : ''}`;
-      $('player-list').innerHTML = players.map(name =>
-        `<div class="player-chip">${esc(name)}</div>`
-      ).join('');
+      $('player-list').innerHTML = players.map(p => {
+        const name = typeof p === 'string' ? p : p.name;
+        const avatar = typeof p === 'string' ? '' : (p.avatar || '');
+        return `<div class="player-chip"><span class="player-chip-avatar">${avatar}</span> ${esc(name)}</div>`;
+      }).join('');
     }
 
     function renderOptions(containerId, options) {
@@ -207,23 +225,92 @@
     }
 
     function renderMiniLeaderboard(lb) {
-      $('mini-lb-list').innerHTML = lb.map((p, i) =>
-        `<div class="leaderboard-row">
-          <div class="leaderboard-rank">${i + 1}</div>
-          <div class="leaderboard-name">${esc(p.name)}</div>
-          <div class="leaderboard-score">${p.score.toLocaleString()}</div>
-        </div>`
-      ).join('');
+      const container = $('mini-lb-list');
+
+      // FIRST: record positions of existing rows
+      const prevPositions = {};
+      container.querySelectorAll('.leaderboard-row').forEach(row => {
+        prevPositions[row._playerName] = row.getBoundingClientRect();
+      });
+
+      // LAST: clear and build new rows
+      container.innerHTML = '';
+      const rows = lb.map((p, i) => {
+        const row = document.createElement('div');
+        row.className = 'leaderboard-row lb-animate';
+        row._playerName = p.name;
+        row.innerHTML = `<div class="leaderboard-rank">${i + 1}</div>` +
+          `<div class="leaderboard-avatar">${p.avatar || ''}</div>` +
+          `<div class="leaderboard-name">${esc(p.name)}</div>` +
+          `<div class="leaderboard-score">${p.score.toLocaleString()}</div>`;
+        container.appendChild(row);
+        return row;
+      });
+
+      // INVERT + PLAY
+      rows.forEach(row => {
+        const prev = prevPositions[row._playerName];
+        if (prev) {
+          // Existing player — FLIP Y position
+          const current = row.getBoundingClientRect();
+          const deltaY = prev.top - current.top;
+          row.style.transition = 'none';
+          row.style.transform = `translateY(${deltaY}px)`;
+          row.offsetHeight; // force reflow
+          row.style.transition = 'transform 0.5s ease';
+          row.style.transform = 'translateY(0)';
+        } else {
+          // New entry — slide in from right
+          row.style.transition = 'none';
+          row.style.transform = 'translateX(100%)';
+          row.style.opacity = '0';
+          row.offsetHeight; // force reflow
+          row.style.transition = 'transform 0.5s ease, opacity 0.4s ease';
+          row.style.transform = 'translateX(0)';
+          row.style.opacity = '1';
+        }
+        row.addEventListener('transitionend', () => {
+          row.style.transition = '';
+          row.style.transform = '';
+          row.style.opacity = '';
+        }, { once: true });
+      });
     }
 
     function renderFinalLeaderboard(lb) {
-      $('final-lb').innerHTML = lb.map((p, i) =>
-        `<div class="leaderboard-row">
-          <div class="leaderboard-rank">${i + 1}</div>
-          <div class="leaderboard-name">${esc(p.name)}</div>
-          <div class="leaderboard-score">${p.score.toLocaleString()}</div>
-        </div>`
-      ).join('');
+      const container = $('final-lb');
+      container.innerHTML = '';
+
+      const rows = lb.map((p, i) => {
+        const row = document.createElement('div');
+        row.className = 'leaderboard-row lb-final-animate';
+        row.innerHTML = `<div class="leaderboard-rank">${i + 1}</div>` +
+          `<div class="leaderboard-avatar">${p.avatar || ''}</div>` +
+          `<div class="leaderboard-name">${esc(p.name)}</div>` +
+          `<div class="leaderboard-score">${p.score.toLocaleString()}</div>`;
+        // Start hidden
+        row.style.opacity = '0';
+        row.style.transform = 'translateY(30px) scale(0.95)';
+        container.appendChild(row);
+        return { row, index: i };
+      });
+
+      // Force reflow
+      container.offsetHeight;
+
+      // Stagger: last place first, 1st place last
+      const total = rows.length;
+      rows.forEach(({ row, index }) => {
+        const delay = (total - 1 - index) * 0.15;
+        row.style.transition = `opacity 0.4s ease ${delay}s, transform 0.4s ease ${delay}s`;
+        row.style.opacity = '1';
+        row.style.transform = 'translateY(0) scale(1)';
+        row.addEventListener('transitionend', () => {
+          row.style.transition = '';
+          row.style.transform = '';
+          row.style.opacity = '';
+        }, { once: true });
+      });
     }
 
     function esc(str) {
@@ -244,6 +331,7 @@
 
     $('show-lb-btn').addEventListener('click', () => {
       showScreen('reveal-leaderboard');
+      renderMiniLeaderboard(revealData.leaderboard);
       scheduleAuto(() => $('next-btn').click());
     });
 

@@ -13,6 +13,10 @@
     <div class="join-form">
       <input type="tel" id="pin-input" placeholder="Game PIN" maxlength="4" inputmode="numeric" autocomplete="off">
       <input type="text" id="name-input" placeholder="Nickname" maxlength="20" autocomplete="off">
+      <div class="emoji-picker" id="emoji-picker">
+        <p class="emoji-picker-label">Pick your avatar</p>
+        <div class="emoji-grid" id="emoji-grid"></div>
+      </div>
       <button class="btn" id="join-btn">Join</button>
       <div id="error-box"></div>
     </div>
@@ -30,6 +34,7 @@
     <div class="question-counter" id="q-counter"></div>
     <div class="timer" id="timer">--</div>
     <div class="question-text" id="q-text"></div>
+    <img id="q-image" class="question-image" hidden>
     <div class="options-grid" id="q-options"></div>
   </div>
 
@@ -65,10 +70,42 @@
   <script>
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     let ws = null;
+    let reconnectAttempts = 0;
+    let reconnectTimer = null;
+    let intentionalClose = false;
 
     const $ = id => document.getElementById(id);
     const screens = document.querySelectorAll('.screen');
     const optionColors = ['option-1', 'option-2', 'option-3', 'option-4'];
+
+    // --- Emoji avatar ---
+    const EMOJIS = ['🐶','🐱','🐻','🦊','🐸','🐵','🦁','🐼','🐨','🐯','🦄','🐙','🐳','🦋','🐢','🐬','🦜','🐔','🦖','🐲','🍕','🎸','🚀','🌈'];
+    let selectedAvatar = null;
+
+    function renderEmojiGrid() {
+      $('emoji-grid').innerHTML = EMOJIS.map(e =>
+        `<button type="button" class="emoji-option${selectedAvatar === e ? ' selected' : ''}" data-emoji="${e}">${e}</button>`
+      ).join('');
+      $('emoji-grid').querySelectorAll('.emoji-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          $('emoji-grid').querySelectorAll('.emoji-option').forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          selectedAvatar = btn.dataset.emoji;
+        });
+      });
+    }
+    renderEmojiGrid();
+
+    // --- Session storage helpers ---
+    function saveSession(pin, name, avatar) {
+      try { sessionStorage.setItem('robhoot', JSON.stringify({ pin, name, avatar })); } catch {}
+    }
+    function getSession() {
+      try { return JSON.parse(sessionStorage.getItem('robhoot')); } catch { return null; }
+    }
+    function clearSession() {
+      try { sessionStorage.removeItem('robhoot'); } catch {}
+    }
 
     function showScreen(id) {
       screens.forEach(s => s.classList.remove('active'));
@@ -80,81 +117,194 @@
       setTimeout(() => $('error-box').innerHTML = '', 3000);
     }
 
-    function connect() {
+    // --- Central message handler ---
+    function handleMessage(type, data) {
+      switch (type) {
+        case 'joined':
+          reconnectAttempts = 0;
+          if (data.avatar) selectedAvatar = data.avatar;
+          saveSession($('pin-input').value.trim(), data.name, data.avatar || selectedAvatar);
+          showScreen('waiting-screen');
+          $('welcome-msg').textContent = `Welcome, ${data.name}!`;
+          break;
+
+        case 'rejoined':
+          reconnectAttempts = 0;
+          $('join-btn').textContent = 'Join';
+          applyResync(data);
+          break;
+
+        case 'error':
+          if ($('join-screen').classList.contains('active')) {
+            // If rejoin failed with "Invalid PIN" or "No active game", clear session
+            if (data.message === 'Invalid PIN' || data.message === 'No active game to rejoin' || data.message === 'Player not found in this game') {
+              clearSession();
+              $('join-btn').textContent = 'Join';
+            }
+            showError(data.message);
+            $('join-btn').disabled = false;
+          }
+          break;
+
+        case 'question':
+          showScreen('question-screen');
+          $('q-counter').textContent = `Question ${data.index + 1} of ${data.total}`;
+          $('timer').textContent = data.timeLimit;
+          $('timer').className = 'timer';
+          $('q-text').textContent = data.question;
+          showImage('q-image', data.image);
+          renderOptions(data.options);
+          break;
+
+        case 'timer':
+          $('timer').textContent = data.remaining;
+          if (data.remaining <= 5) {
+            $('timer').classList.add('warning');
+          }
+          break;
+
+        case 'answer-received':
+          showScreen('answered-screen');
+          break;
+
+        case 'result':
+          showScreen('result-screen');
+          if (data.yourAnswer === data.correct) {
+            $('feedback').textContent = 'Correct!';
+            $('feedback').className = 'feedback correct';
+            $('points').textContent = `+${data.points.toLocaleString()} pts`;
+          } else {
+            $('feedback').textContent = data.yourAnswer ? 'Wrong!' : 'No answer';
+            $('feedback').className = 'feedback wrong';
+            $('points').textContent = '+0 pts';
+          }
+          $('total-score').textContent = `Total: ${data.totalScore.toLocaleString()}`;
+          break;
+
+        case 'leaderboard':
+          showScreen('leaderboard-screen');
+          renderLeaderboard(data.leaderboard);
+          clearSession();
+          break;
+
+        case 'host-disconnected':
+          showScreen('disconnected-screen');
+          intentionalClose = true;
+          clearSession();
+          break;
+      }
+    }
+
+    // --- Apply resync payload after rejoin ---
+    function applyResync(data) {
+      if (data.state === 'question' && !data.alreadyAnswered) {
+        showScreen('question-screen');
+        const q = data.question;
+        $('q-counter').textContent = `Question ${q.index + 1} of ${q.total}`;
+        $('timer').textContent = data.timeRemaining;
+        $('timer').className = 'timer';
+        if (data.timeRemaining <= 5) $('timer').classList.add('warning');
+        $('q-text').textContent = q.question;
+        showImage('q-image', q.image);
+        renderOptions(q.options);
+      } else if (data.state === 'question' && data.alreadyAnswered) {
+        showScreen('answered-screen');
+      } else if (data.state === 'reveal') {
+        showScreen('result-screen');
+        const r = data.result;
+        if (r.yourAnswer === r.correct) {
+          $('feedback').textContent = 'Correct!';
+          $('feedback').className = 'feedback correct';
+          $('points').textContent = `+${r.points.toLocaleString()} pts`;
+        } else {
+          $('feedback').textContent = r.yourAnswer ? 'Wrong!' : 'No answer';
+          $('feedback').className = 'feedback wrong';
+          $('points').textContent = '+0 pts';
+        }
+        $('total-score').textContent = `Total: ${r.totalScore.toLocaleString()}`;
+      } else if (data.state === 'leaderboard') {
+        showScreen('leaderboard-screen');
+        renderLeaderboard(data.leaderboard);
+        clearSession();
+      }
+    }
+
+    // --- Reconnection logic ---
+    function attemptRejoin(pin, name, avatar) {
       ws = new WebSocket(`${proto}//${location.host}/ws/play`);
+      intentionalClose = false;
 
       ws.onopen = () => {
-        // If reconnecting, nothing to do until user joins
+        ws.send(JSON.stringify({ type: 'rejoin', data: { pin, name, avatar } }));
       };
 
       ws.onmessage = (e) => {
         const { type, data } = JSON.parse(e.data);
-
-        switch (type) {
-          case 'joined':
-            showScreen('waiting-screen');
-            $('welcome-msg').textContent = `Welcome, ${data.name}!`;
-            break;
-
-          case 'error':
-            if ($('join-screen').classList.contains('active')) {
-              showError(data.message);
-              $('join-btn').disabled = false;
-            }
-            break;
-
-          case 'question':
-            showScreen('question-screen');
-            $('q-counter').textContent = `Question ${data.index + 1} of ${data.total}`;
-            $('timer').textContent = data.timeLimit;
-            $('timer').className = 'timer';
-            $('q-text').textContent = data.question;
-            renderOptions(data.options);
-            break;
-
-          case 'timer':
-            $('timer').textContent = data.remaining;
-            if (data.remaining <= 5) {
-              $('timer').classList.add('warning');
-            }
-            break;
-
-          case 'answer-received':
-            showScreen('answered-screen');
-            break;
-
-          case 'result':
-            showScreen('result-screen');
-            if (data.yourAnswer === data.correct) {
-              $('feedback').textContent = 'Correct!';
-              $('feedback').className = 'feedback correct';
-              $('points').textContent = `+${data.points.toLocaleString()} pts`;
-            } else {
-              $('feedback').textContent = data.yourAnswer ? 'Wrong!' : 'No answer';
-              $('feedback').className = 'feedback wrong';
-              $('points').textContent = '+0 pts';
-            }
-            $('total-score').textContent = `Total: ${data.totalScore.toLocaleString()}`;
-            break;
-
-          case 'leaderboard':
-            showScreen('leaderboard-screen');
-            renderLeaderboard(data.leaderboard);
-            break;
-
-          case 'host-disconnected':
-            showScreen('disconnected-screen');
-            break;
-        }
+        handleMessage(type, data);
       };
 
       ws.onclose = () => {
-        // If we're past the join screen, show disconnect
-        if (!$('join-screen').classList.contains('active')) {
+        if (intentionalClose) return;
+        handleDisconnect();
+      };
+    }
+
+    function handleDisconnect() {
+      const session = getSession();
+      if (!session) {
+        // No session — just show join screen
+        if (!$('join-screen').classList.contains('active') && !$('disconnected-screen').classList.contains('active') && !$('leaderboard-screen').classList.contains('active')) {
           showScreen('join-screen');
           showError('Disconnected from game');
         }
+        return;
+      }
+
+      // Auto-retry up to 3 times with exponential backoff
+      if (reconnectAttempts < 3) {
+        const delay = Math.pow(2, reconnectAttempts) * 1000; // 1s, 2s, 4s
+        reconnectAttempts++;
+        reconnectTimer = setTimeout(() => {
+          attemptRejoin(session.pin, session.name, session.avatar);
+        }, delay);
+      } else {
+        // All retries exhausted — show pre-filled join screen with rejoin button
+        reconnectAttempts = 0;
+        showScreen('join-screen');
+        $('pin-input').value = session.pin;
+        $('name-input').value = session.name;
+        $('join-btn').textContent = 'Rejoin Game';
+        $('join-btn').disabled = false;
+        showError('Connection lost. Tap Rejoin to reconnect.');
+      }
+    }
+
+    function connect() {
+      ws = new WebSocket(`${proto}//${location.host}/ws/play`);
+      intentionalClose = false;
+
+      ws.onopen = () => {};
+
+      ws.onmessage = (e) => {
+        const { type, data } = JSON.parse(e.data);
+        handleMessage(type, data);
       };
+
+      ws.onclose = () => {
+        if (intentionalClose) return;
+        handleDisconnect();
+      };
+    }
+
+    function showImage(id, filename) {
+      const img = $(id);
+      if (filename) {
+        img.src = `/images/${filename}`;
+        img.hidden = false;
+      } else {
+        img.hidden = true;
+        img.src = '';
+      }
     }
 
     function renderOptions(options) {
@@ -164,7 +314,6 @@
 
       $('q-options').querySelectorAll('.option-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-          // Disable all buttons
           $('q-options').querySelectorAll('.option-btn').forEach(b => {
             b.disabled = true;
           });
@@ -178,6 +327,7 @@
       $('final-lb').innerHTML = lb.map((p, i) =>
         `<div class="leaderboard-row">
           <div class="leaderboard-rank">${i + 1}</div>
+          <div class="leaderboard-avatar">${p.avatar || ''}</div>
           <div class="leaderboard-name">${esc(p.name)}</div>
           <div class="leaderboard-score">${p.score.toLocaleString()}</div>
         </div>`
@@ -186,7 +336,7 @@
 
     function esc(str) {
       const d = document.createElement('div');
-      d.textContent = str; // This will automatically escape HTML
+      d.textContent = str;
       return d.innerHTML;
     }
 
@@ -199,22 +349,35 @@
         return;
       }
       $('join-btn').disabled = true;
+
+      // Pick a random avatar if none selected
+      const avatar = selectedAvatar || EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
+      selectedAvatar = avatar;
+
+      // Determine if this is a rejoin (button says "Rejoin Game" or session matches)
+      const session = getSession();
+      const isRejoin = session && session.pin === pin && session.name.toLowerCase() === name.toLowerCase();
+      const msgType = isRejoin ? 'rejoin' : 'join';
+
       if (!ws || ws.readyState !== WebSocket.OPEN) {
-        connect();
+        ws = new WebSocket(`${proto}//${location.host}/ws/play`);
+        intentionalClose = false;
+
         ws.onopen = () => {
-          ws.send(JSON.stringify({ type: 'join', data: { pin, name } }));
+          ws.send(JSON.stringify({ type: msgType, data: { pin, name, avatar } }));
         };
-        // Re-attach message handler since connect() sets it
-        const origOnMessage = ws.onmessage;
+
         ws.onmessage = (e) => {
-          const { type } = JSON.parse(e.data);
-          if (type === 'error') {
-            $('join-btn').disabled = false;
-          }
-          origOnMessage(e);
+          const { type, data } = JSON.parse(e.data);
+          handleMessage(type, data);
+        };
+
+        ws.onclose = () => {
+          if (intentionalClose) return;
+          handleDisconnect();
         };
       } else {
-        ws.send(JSON.stringify({ type: 'join', data: { pin, name } }));
+        ws.send(JSON.stringify({ type: msgType, data: { pin, name, avatar } }));
       }
     });
 
@@ -241,8 +404,20 @@
       document.getElementById('pin-input').value = urlPin;
     }
 
-    // Connect on load
-    connect();
+    // On load: check for existing session and try auto-rejoin, otherwise just connect
+    const savedSession = getSession();
+    if (savedSession) {
+      $('pin-input').value = savedSession.pin;
+      $('name-input').value = savedSession.name;
+      if (savedSession.avatar) {
+        selectedAvatar = savedSession.avatar;
+        renderEmojiGrid();
+      }
+      $('join-btn').textContent = 'Rejoin Game';
+      attemptRejoin(savedSession.pin, savedSession.name, savedSession.avatar);
+    } else {
+      connect();
+    }
   </script>
 </body>
 </html>

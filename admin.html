@@ -98,6 +98,34 @@
     .delete-btn:hover {
       background: #c0162f;
     }
+
+    .img-cell {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+      height: 100%;
+    }
+
+    .img-cell img {
+      height: 28px;
+      width: 28px;
+      object-fit: cover;
+      border-radius: 3px;
+    }
+
+    .img-cell .img-placeholder {
+      opacity: 0.4;
+      font-size: 0.8rem;
+    }
+
+    .img-cell .img-remove {
+      color: #e21b3c;
+      font-weight: 700;
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-left: auto;
+    }
   </style>
 </head>
 <body>
@@ -162,6 +190,42 @@
           editorParams: { min: 5, max: 120, step: 5 },
         },
         {
+          title: 'Image', field: 'image', width: 110, headerSort: false,
+          formatter: function(cell) {
+            const val = cell.getValue();
+            if (val) {
+              return `<div class="img-cell"><img src="/images/${val}"><span class="img-remove" data-action="remove">✕</span></div>`;
+            }
+            return '<div class="img-cell"><span class="img-placeholder">+ image</span></div>';
+          },
+          cellClick: function(e, cell) {
+            if (e.target.dataset.action === 'remove') {
+              cell.setValue('');
+              return;
+            }
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = async () => {
+              const file = input.files[0];
+              if (!file) return;
+              try {
+                const res = await fetch('/api/images', {
+                  method: 'POST',
+                  headers: { 'Content-Type': file.type },
+                  body: file,
+                });
+                if (!res.ok) throw new Error('Upload failed');
+                const { filename } = await res.json();
+                cell.setValue(filename);
+              } catch (err) {
+                showStatus(err.message, 'error');
+              }
+            };
+            input.click();
+          },
+        },
+        {
           title: '', width: 70, hozAlign: 'center', headerSort: false,
           formatter: function() {
             return '<button class="delete-btn">X</button>';
@@ -189,7 +253,7 @@
       table.addRow({
         question: '', type: 'mc',
         option1: '', option2: '', option3: '', option4: '',
-        correct: '1', time_limit: '20',
+        correct: '1', time_limit: '20', image: '',
       });
     });
 

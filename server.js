@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -53,6 +54,7 @@ function loadQuestions() {
     options: [q.option1, q.option2, q.option3, q.option4].filter(o => o !== ''),
     correct: parseInt(q.correct, 10),
     timeLimit: parseInt(q.time_limit, 10) || 20,
+    image: q.image || '',
   }));
 }
 
@@ -131,8 +133,47 @@ function sendToHost(type, data) {
 
 function getLeaderboard() {
   return Array.from(game.players.values())
-    .map(p => ({ name: p.name, score: p.score }))
+    .map(p => ({ name: p.name, avatar: p.avatar, score: p.score }))
     .sort((a, b) => b.score - a.score);
+}
+
+function connectedPlayerCount() {
+  let count = 0;
+  game.players.forEach(p => { if (p.ws.readyState === 1) count++; });
+  return count;
+}
+
+function buildResyncPayload(playerId) {
+  const player = game.players.get(playerId);
+  const payload = { state: game.state };
+
+  if (game.state === 'question') {
+    const q = game.questions[game.currentQuestion];
+    payload.question = {
+      index: game.currentQuestion,
+      total: game.questions.length,
+      question: q.question,
+      type: q.type,
+      options: q.options,
+      timeLimit: q.timeLimit,
+      image: q.image || '',
+    };
+    payload.timeRemaining = game.timeRemaining;
+    payload.alreadyAnswered = player.answer !== null;
+  } else if (game.state === 'reveal') {
+    const q = game.questions[game.currentQuestion];
+    payload.result = {
+      correct: q.correct,
+      yourAnswer: player.answer,
+      points: player.lastPoints || 0,
+      totalScore: player.score,
+      isLast: game.currentQuestion >= game.questions.length - 1,
+    };
+  } else if (game.state === 'leaderboard') {
+    payload.leaderboard = getLeaderboard();
+  }
+
+  return payload;
 }
 
 function startQuestion() {
@@ -161,6 +202,7 @@ function startQuestion() {
     type: q.type,
     options: q.options,
     timeLimit: q.timeLimit,
+    image: q.image || '',
   });
 
   // Start countdown
@@ -249,7 +291,7 @@ function requireAuth(req, res, next) {
 
 // --- CSV Serializer ---
 function serializeCSV(rows) {
-  const headers = ['question', 'type', 'option1', 'option2', 'option3', 'option4', 'correct', 'time_limit'];
+  const headers = ['question', 'type', 'option1', 'option2', 'option3', 'option4', 'correct', 'time_limit', 'image'];
   const quoteField = (val) => {
     const s = String(val ?? '');
     if (s.includes(',') || s.includes('"') || s.includes('\n')) {
@@ -295,6 +337,23 @@ app.put('/api/questions', requireAuth, (req, res) => {
   }
 });
 
+// Serve uploaded images
+const imagesDir = path.join(__dirname, 'data', 'images');
+app.use('/images', express.static(imagesDir));
+
+// Image upload (raw body, content-type used for extension)
+app.post('/api/images', requireAuth, express.raw({ type: 'image/*', limit: '5mb' }), (req, res) => {
+  try {
+    const ext = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp' }[req.headers['content-type']];
+    if (!ext) return res.status(400).json({ error: 'Unsupported image type' });
+    const filename = crypto.randomBytes(8).toString('hex') + ext;
+    fs.writeFileSync(path.join(imagesDir, filename), req.body);
+    res.json({ filename });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- WebSocket ---
@@ -328,7 +387,7 @@ function handleHost(ws) {
 
   send(ws, 'lobby', {
     pin: game.pin,
-    players: Array.from(game.players.values()).map(p => p.name),
+    players: Array.from(game.players.values()).map(p => ({ name: p.name, avatar: p.avatar })),
   });
 
   ws.on('message', (raw) => {
@@ -368,7 +427,7 @@ function handlePlayer(ws) {
     try { msg = JSON.parse(raw); } catch { return; }
 
     if (msg.type === 'join') {
-      const { pin, name } = msg.data || {};
+      const { pin, name, avatar } = msg.data || {};
       if (!pin || !name) {
         send(ws, 'error', { message: 'PIN and name required' });
         return;
@@ -398,6 +457,7 @@ function handlePlayer(ws) {
       playerId = String(nextPlayerId++);
       game.players.set(playerId, {
         name: trimmedName,
+        avatar: avatar || '🐶',
         ws,
         score: 0,
         answer: null,
@@ -405,13 +465,51 @@ function handlePlayer(ws) {
         lastPoints: 0,
       });
 
-      send(ws, 'joined', { name: trimmedName });
+      send(ws, 'joined', { name: trimmedName, avatar: avatar || '🐶' });
       sendToHost('player-joined', {
         name: trimmedName,
+        avatar: avatar || '🐶',
         count: game.players.size,
-        players: Array.from(game.players.values()).map(p => p.name),
+        players: Array.from(game.players.values()).map(p => ({ name: p.name, avatar: p.avatar })),
       });
       console.log(`Player joined: ${trimmedName} (${game.players.size} total)`);
+
+    } else if (msg.type === 'rejoin') {
+      const { pin, name } = msg.data || {};
+      if (!pin || !name) {
+        send(ws, 'error', { message: 'PIN and name required' });
+        return;
+      }
+      if (String(pin) !== game.pin) {
+        send(ws, 'error', { message: 'Invalid PIN' });
+        return;
+      }
+      if (game.state === 'idle' || game.state === 'lobby') {
+        send(ws, 'error', { message: 'No active game to rejoin' });
+        return;
+      }
+
+      // Find player by name (case-insensitive)
+      let foundId = null;
+      for (const [id, p] of game.players.entries()) {
+        if (p.name.toLowerCase() === name.trim().toLowerCase()) {
+          foundId = id;
+          break;
+        }
+      }
+      if (!foundId) {
+        send(ws, 'error', { message: 'Player not found in this game' });
+        return;
+      }
+
+      // Swap WebSocket reference
+      const player = game.players.get(foundId);
+      player.ws = ws;
+      playerId = foundId;
+
+      const resync = buildResyncPayload(foundId);
+      send(ws, 'rejoined', resync);
+      console.log(`Player reconnected: ${player.name}`);
 
     } else if (msg.type === 'answer') {
       if (!playerId || game.state !== 'question') return;
@@ -432,8 +530,8 @@ function handlePlayer(ws) {
         total: game.players.size,
       });
 
-      // Auto-reveal if everyone answered
-      if (game.answerCount >= game.players.size) {
+      // Auto-reveal if all connected players answered
+      if (game.answerCount >= connectedPlayerCount()) {
         revealAnswer();
       }
     }
@@ -447,22 +545,44 @@ function handlePlayer(ws) {
         sendToHost('player-left', {
           name: player.name,
           count: game.players.size,
-          players: Array.from(game.players.values()).map(p => p.name),
+          players: Array.from(game.players.values()).map(p => ({ name: p.name, avatar: p.avatar })),
         });
         console.log(`Player left: ${player.name} (${game.players.size} total)`);
+      }
+    } else if (playerId && game.state !== 'idle') {
+      const player = game.players.get(playerId);
+      if (player) {
+        console.log(`Player disconnected mid-game: ${player.name} (awaiting reconnect)`);
       }
     }
   });
 }
 
 // --- Start Server ---
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  const localIP = Object.values(os.networkInterfaces())
-    .flat()
-    .find(i => i.family === 'IPv4' && !i.internal)?.address || 'localhost';
-  console.log(`\nRobHoot server running on port ${PORT}`);
-  console.log(`  Local:   http://localhost:${PORT}/host.html`);
-  console.log(`  Network: http://${localIP}:${PORT}/play.html`);
-  console.log(`\nLoaded ${questions.length} questions`);
-});
+const DEV_MODE = process.argv.includes('--dev');
+const preferredPort = parseInt(process.env.PORT, 10) || 3000;
+
+function startListening(port) {
+  server.listen(port, () => {
+    const localIP = Object.values(os.networkInterfaces())
+      .flat()
+      .find(i => i.family === 'IPv4' && !i.internal)?.address || 'localhost';
+    console.log(`\nRobHoot server running on port ${port}`);
+    console.log(`  Local:   http://localhost:${port}/host.html`);
+    console.log(`  Network: http://${localIP}:${port}/play.html`);
+    console.log(`\nLoaded ${questions.length} questions`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && DEV_MODE) {
+      console.log(`Port ${port} in use, trying ${port + 1}...`);
+      server.close();
+      startListening(port + 1);
+    } else {
+      console.error(`Failed to start server: ${err.message}`);
+      process.exit(1);
+    }
+  });
+}
+
+startListening(preferredPort);
